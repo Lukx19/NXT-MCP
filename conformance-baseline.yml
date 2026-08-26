@@ -1,0 +1,28 @@
+# This server intentionally exposes only NXT tools. These generic conformance
+# scenarios require optional capabilities (resources, prompts, sampling,
+# elicitation, progress or media-producing tools) that are not advertised.
+# The runner treats this list as a burn-down baseline and fails if an entry
+# starts passing, preventing it from becoming stale.
+server:
+  - logging-set-level
+  - completion-complete
+  - tools-call-image
+  - tools-call-audio
+  - tools-call-embedded-resource
+  - tools-call-mixed-content
+  - tools-call-with-logging
+  - tools-call-with-progress
+  - tools-call-sampling
+  - tools-call-elicitation
+  - elicitation-sep1034-defaults
+  - elicitation-sep1330-enums
+  - resources-read-text
+  - resources-read-binary
+  - resources-templates-read
+  - resources-subscribe
+  - resources-unsubscribe
+  - prompts-get-simple
+  - prompts-get-with-args
+  - prompts-get-embedded-resource
+  - prompts-get-with-image
+client: []

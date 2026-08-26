@@ -1,0 +1,5 @@
+{
+  "name": "lego-nxt",
+  "version": "0.1.0",
+  "description": "Local MCP control for a LEGO Mindstorms NXT over USB"
+}

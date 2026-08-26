@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nxt-mcp"
+version = "0.1.0"
+description = "Local MCP server for a LEGO Mindstorms NXT over USB"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "mcp[cli]>=2,<3",
+  "nxt-python==3.5.1",
+  "pyusb>=1.2,<2",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+
+[project.scripts]
+nxt-mcp = "nxt_mcp.server:main"
+nxt-mcp-stdio = "nxt_mcp.stdio:main"
+nxt-mcp-http = "nxt_mcp.http:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nxt_mcp"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
