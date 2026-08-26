@@ -1,11 +1,22 @@
-# NXT MCP
+# Robot NXT Control MCP
 
-Local MCP server for an original LEGO Mindstorms NXT connected to Windows 11 by USB/WinUSB.
+Local MCP server for compatible programmable-brick hardware connected to Windows 11 by USB/WinUSB.
+
+## Compatibility and trademarks
+
+This independent project is not affiliated with, sponsored by, or endorsed by the LEGO Group. LEGO, MINDSTORMS, and NXT are trademarks of the LEGO Group. They are used in this documentation only to identify compatible hardware, software, protocols, and third-party dependencies; they are not part of this project's name, server identifier, or plugin identifier.
+
+### Migration from earlier releases
+
+The old plugin and MCP-server identifier has been replaced by `robot-nxt-control`, and the
+executables are now named `robot-nxt-control-mcp`, `robot-nxt-control-mcp-stdio`, and
+`robot-nxt-control-mcp-http`. Reinstall the editable package after pulling this change and
+replace earlier MCP configuration entries with the examples below.
 
 ## Install in Claude Desktop or Codex desktop (Windows)
 
 Complete the [Windows installation](#windows-11-installation) first. These desktop
-apps start the MCP server themselves, so do **not** run `nxt-mcp-stdio.exe` manually.
+apps start the MCP server themselves, so do **not** run `robot-nxt-control-mcp-stdio.exe` manually.
 The examples assume this repository is at `C:\Users\lukas\workspace\NXT-MCP`; replace
 that part in every path if your checkout is elsewhere.
 
@@ -13,15 +24,15 @@ that part in every path if your checkout is elsewhere.
 
 1. Fully quit Claude Desktop (including its tray icon).
 2. Open `%APPDATA%\Claude\claude_desktop_config.json`. Create the file if it does not
-   exist. If it already has an `mcpServers` object, add only the `lego-nxt` entry below.
+   exist. If it already has an `mcpServers` object, add only the `robot-nxt-control` entry below.
 3. Save the file and start Claude Desktop again. The server should appear in
    **Settings → Developer → MCP servers**.
 
 ```json
 {
   "mcpServers": {
-    "lego-nxt": {
-      "command": "C:\\Users\\lukas\\workspace\\NXT-MCP\\.venv\\Scripts\\nxt-mcp-stdio.exe",
+    "robot-nxt-control": {
+      "command": "C:\\Users\\lukas\\workspace\\NXT-MCP\\.venv\\Scripts\\robot-nxt-control-mcp-stdio.exe",
       "cwd": "C:\\Users\\lukas\\workspace\\NXT-MCP"
     }
   }
@@ -38,8 +49,8 @@ The Codex desktop host and Codex CLI use the shared MCP configuration in
 `codex mcp add` command below), then restart the Codex app:
 
 ```toml
-[mcp_servers.lego-nxt]
-command = "C:\\Users\\lukas\\workspace\\NXT-MCP\\.venv\\Scripts\\nxt-mcp-stdio.exe"
+[mcp_servers.robot-nxt-control]
+command = "C:\\Users\\lukas\\workspace\\NXT-MCP\\.venv\\Scripts\\robot-nxt-control-mcp-stdio.exe"
 cwd = "C:\\Users\\lukas\\workspace\\NXT-MCP"
 startup_timeout_sec = 10
 tool_timeout_sec = 120
@@ -48,12 +59,12 @@ tool_timeout_sec = 120
 PowerShell alternative:
 
 ```powershell
-codex mcp add lego-nxt -- C:\Users\lukas\workspace\NXT-MCP\.venv\Scripts\nxt-mcp-stdio.exe
+codex mcp add robot-nxt-control -- C:\Users\lukas\workspace\NXT-MCP\.venv\Scripts\robot-nxt-control-mcp-stdio.exe
 codex mcp list
 ```
 
 For the ChatGPT desktop MCP UI: **Settings → MCP servers → Add server**, choose
-**STDIO**, enter `lego-nxt`, use the same executable as the command, save, then
+**STDIO**, enter `robot-nxt-control`, use the same executable as the command, save, then
 restart the app. Local Codex clients support both STDIO and Streamable HTTP and share
 this MCP configuration. [Official OpenAI MCP documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)
 
@@ -67,7 +78,7 @@ movement commands.
 
 ## MCP transports, hosts, and verification
 
-The same `create_server()` factory powers both transports. `nxt-mcp-stdio` is the
+The same `create_server()` factory powers both transports. `robot-nxt-control-mcp-stdio` is the
 local-process transport for Claude Desktop, Claude Code, Codex CLI, Codex desktop,
 and local Codex plugins. It writes protocol traffic only to stdout.
 
@@ -76,12 +87,12 @@ path after moving the checkout:
 
 - Claude Desktop: `packaging/claude-desktop/mcp.json`
 - Claude Code plugin: `packaging/claude-code/`
-- Codex local plugin: `C:\Users\lukas\plugins\lego-nxt` (created in the personal marketplace)
+- Codex local plugin: `C:\Users\lukas\plugins\robot-nxt-control` (created in the personal marketplace)
 
 For protocol testing, start Streamable HTTP on loopback:
 
 ```powershell
-.\.venv\Scripts\nxt-mcp-http.exe --port 8000
+.\.venv\Scripts\robot-nxt-control-mcp-http.exe --port 8000
 npx @modelcontextprotocol/inspector --cli http://127.0.0.1:8000/mcp --method tools/list
 npx @modelcontextprotocol/conformance server --url http://127.0.0.1:8000/mcp --suite active
 ```
@@ -92,7 +103,7 @@ addition to controller and behavior tests. `conformance-baseline.yml` records on
 generic scenarios requiring optional MCP features this focused hardware server does
 not advertise; each entry is a burn-down assertion, so the runner flags stale entries.
 
-`nxt-mcp-http` binds to `127.0.0.1` by default and refuses non-loopback binding unless
+`robot-nxt-control-mcp-http` binds to `127.0.0.1` by default and refuses non-loopback binding unless
 `NXT_MCP_ALLOW_REMOTE=true` is explicitly set. A cloud client cannot reach a USB NXT
 directly: run this server next to the robot and place a production HTTPS reverse proxy
 with OAuth/token validation, authorization, audit logs, and network restrictions in
@@ -207,14 +218,14 @@ Then open the MCP Inspector:
 ```
 
 For a local MCP host, configure a stdio server with command
-`.venv\Scripts\nxt-mcp.exe` and the repository as its working directory.
+`.venv\Scripts\robot-nxt-control-mcp.exe` and the repository as its working directory.
 
 Declare the sensors attached to the brick before starting the server so the whole-brick
 snapshot can return typed readings immediately:
 
 ```powershell
 $env:NXT_SENSOR_MAP = "1:touch,2:light,4:ultrasonic"
-.\.venv\Scripts\nxt-mcp.exe
+.\.venv\Scripts\robot-nxt-control-mcp.exe
 ```
 
 Calling `read_sensor` or a sensor-driven motor command also remembers that port's type
@@ -256,6 +267,34 @@ for later snapshots.
 Every sensor-driven motion has a timeout and an encoder travel limit. Reaching either
 limit stops the motor and returns `ok: false` with the reason. The motor is also stopped
 if a sensor or USB read fails.
+
+### Extended diagnostics, storage, and telemetry
+
+- `motor_state(port)` reports regulation, run state, tachos, and configured output state.
+  `drive_sync(left_port, right_port, power, turn_ratio=0)` uses NXT firmware sync
+  regulation for a differential-drive pair; `wait_motors(...)` has a deadline and stops
+  its ports on timeout.
+- `read_sensor_raw(port, sensor_type?)`, `wait_sensor(...)`, and `sensor_stream(...)`
+  expose bounded diagnostics, debounced sensor waits, and finite samples.
+- For light, color, and ultrasonic sensors, call
+  `zero_sensor_reference(port, sensor_type)` then
+  `read_sensor_relative(port, sensor_type)`. It returns the change from the captured
+  zero plus the absolute value. Color uses reflected-light intensity (not the discrete
+  red/blue/etc. label) for meaningful subtraction.
+- `log_start`, `log_status`, `log_stop`, and `log_export` provide bounded host-side CSV
+  telemetry. Valid channels are `battery_mv`, `motor:A` through `motor:C`, and
+  `sensor:1:touch` (or another supported sensor type/port).
+- `list_files`, `read_file`, `write_file`, and `delete_file` manage bounded NXT user
+  files. Writes are limited to `.txt`, `.csv`, `.dat`, and `.rso`; sound playback uses
+  `play_sound_file(name)` and `stop_sound()`.
+- `mailbox_send` / `mailbox_receive` support messages up to 58 UTF-8 bytes;
+  `i2c_transaction` is an opt-in low-speed operation limited to 16-byte request and
+  response payloads. `set_brick_name` and `keep_alive` are the supported administrative
+  direct commands.
+
+The stock NXT direct-command protocol cannot draw on the NXT LCD or read its buttons.
+Those NXT-G/ROBOTC features require a separately installed NXT-resident bridge program;
+they are intentionally not exposed by this server.
 
 ### Motor positioning semantics
 
@@ -320,12 +359,23 @@ The script-visible `robot` interface contains:
 ```text
 configure_sensor(port, sensor_type)
 read_sensor(port, sensor_type)
+read_sensor_raw(port, sensor_type=None)
+zero_sensor_reference(port, sensor_type)
+read_sensor_relative(port, sensor_type)
+wait_sensor(port, sensor_type, condition, ...)
+sensor_stream(port, sensor_type, ...)
+log_start(channels, interval_ms=100, duration_seconds=10)
+log_status(job_id)
+log_stop(job_id)
+log_export(job_id)
 motor_until(port, power, sensor_port, condition, sensor_type="touch", ...)
 motor_for_ticks(port, power, ticks, ...)
 motor_position(port)
 zero_motor_position(port)
 motor_to(port, target_degrees, power=20, ...)
 run_motor(port, power, regulated=True)
+drive_sync(left_port, right_port, power, turn_ratio=0)
+wait_motors(ports, ...)
 stop_motor(port, brake=False)
 run_motors(ports, powers, regulated=True)
 stop_motors(ports, brake=False)
@@ -334,6 +384,8 @@ motors_absolute(ports, powers, target_degrees, ...)
 motors_until(ports, powers, sensor_port, condition, ...)
 state(format="text")
 play_tone(frequency_hz=440, duration_ms=500)
+play_sound_file(name, loop=False)
+stop_sound()
 sleep(seconds)
 ```
 

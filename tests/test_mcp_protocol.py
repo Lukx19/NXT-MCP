@@ -23,6 +23,7 @@ def test_mcp_initialization_lists_annotated_tools() -> None:
             tools = await client.list_tools()
             by_name = {tool.name: tool for tool in tools.tools}
             assert "nxt_info" in by_name
+            assert {"drive_sync", "read_sensor_relative", "log_start", "i2c_transaction"} <= set(by_name)
             assert by_name["nxt_info"].annotations.read_only_hint is True
             assert by_name["run_motor"].annotations.read_only_hint is False
             result = await client.call_tool("nxt_info")

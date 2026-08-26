@@ -221,6 +221,21 @@ class NxtPythonHardware:
             values = self._get_brick().get_output_state(self._motor_port(port))
             return self._motor_values(port, values)
 
+    def drive_sync(self, left: MotorPort, right: MotorPort, power: int, turn_ratio: int) -> None:
+        """Run a two-motor firmware-synchronised drive pair.
+
+        NXT sync regulation uses the first output as the master and expects the
+        second output to be started with the same sync settings.
+        """
+        with self._lock:
+            _, motor, _, _ = self._modules()
+            brick = self._get_brick()
+            for port in (left, right):
+                brick.set_output_state(
+                    self._motor_port(port), power, motor.Mode.ON | motor.Mode.REGULATED,
+                    motor.RegulationMode.SYNC, turn_ratio, motor.RunState.RUNNING, 0,
+                )
+
     def read_sensor(self, port: SensorPort, sensor_type: SensorType) -> dict[str, Any]:
         units = {
             "touch": "boolean",
@@ -233,6 +248,35 @@ class NxtPythonHardware:
         with self._lock:
             value = self._json_value(self._sensor(port, sensor_type).get_sample())
         return {"port": port, "sensor_type": sensor_type, "value": value, "units": units[sensor_type]}
+
+    def raw_sensor_state(self, port: SensorPort) -> dict[str, Any]:
+        with self._lock:
+            values = self._get_brick().get_input_values(self._sensor_port(port))
+        return {
+            "port": port,
+            "configured_type": self._sensor_types.get(port),
+            "valid": values[1],
+            "calibrated": values[2],
+            "firmware_type": self._enum_name(values[3]),
+            "firmware_mode": self._enum_name(values[4]),
+            "raw_value": values[5],
+            "normalized_value": values[6],
+            "scaled_value": values[7],
+            "calibrated_value": values[8],
+        }
+
+    def relative_sensor_value(self, port: SensorPort, sensor_type: SensorType) -> float:
+        """Return a numeric physical value suitable for relative-zero mode.
+
+        The NXT colour sensor's normal sample is a discrete colour enum. Relative
+        mode instead uses its reflected-light reading with the lamp off.
+        """
+        with self._lock:
+            sensor = self._sensor(port, sensor_type)
+            if sensor_type == "color":
+                _, _, sensor_module, _ = self._modules()
+                return float(sensor.get_reflected_light(sensor_module.Type.COLOR_NONE))
+            return float(sensor.get_sample())
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -256,17 +300,7 @@ class NxtPythonHardware:
                 return {"port": port, "configured_type": configured, "error": str(exc)}
 
         try:
-            values = self._get_brick().get_input_values(self._sensor_port(port))
-            return {
-                "port": port,
-                "configured_type": None,
-                "valid": values[1],
-                "firmware_type": self._enum_name(values[3]),
-                "firmware_mode": self._enum_name(values[4]),
-                "raw_value": values[5],
-                "normalized_value": values[6],
-                "scaled_value": values[7],
-            }
+            return self.raw_sensor_state(port)
         except Exception as exc:
             return {"port": port, "configured_type": None, "error": str(exc)}
 
@@ -313,6 +347,84 @@ class NxtPythonHardware:
     def play_tone(self, frequency_hz: int, duration_ms: int) -> None:
         with self._lock:
             self._get_brick().play_tone(frequency_hz, duration_ms)
+
+    def play_sound_file(self, name: str, loop: bool) -> None:
+        with self._lock:
+            self._get_brick().play_sound_file(loop, name)
+
+    def stop_sound(self) -> None:
+        with self._lock:
+            self._get_brick().stop_sound_playback()
+
+    def list_files(self, pattern: str) -> list[tuple[str, int]]:
+        with self._lock:
+            return list(self._get_brick().find_files(pattern))
+
+    def read_file(self, name: str, max_bytes: int) -> bytes:
+        with self._lock:
+            brick = self._get_brick()
+            handle, size = brick.file_open_read(name)
+            if size > max_bytes:
+                brick.file_close(handle)
+                raise ValueError(f"file is {size} bytes, above requested max_bytes {max_bytes}")
+            try:
+                parts: list[bytes] = []
+                remaining = size
+                while remaining:
+                    _handle, part = brick.file_read(handle, min(remaining, 58))
+                    parts.append(part)
+                    remaining -= len(part)
+                return b"".join(parts)
+            finally:
+                brick.file_close(handle)
+
+    def write_file(self, name: str, content: bytes) -> None:
+        with self._lock:
+            brick = self._get_brick()
+            handle = brick.file_open_write(name, len(content))
+            try:
+                for offset in range(0, len(content), 58):
+                    brick.file_write(handle, content[offset : offset + 58])
+            finally:
+                brick.file_close(handle)
+
+    def delete_file(self, name: str) -> None:
+        with self._lock:
+            self._get_brick().file_delete(name)
+
+    def mailbox_send(self, inbox: int, data: bytes) -> None:
+        with self._lock:
+            self._get_brick().message_write(inbox, data)
+
+    def mailbox_receive(self, inbox: int, remove: bool) -> bytes:
+        with self._lock:
+            _local_inbox, data = self._get_brick().message_read(inbox, inbox, remove)
+            return data
+
+    def i2c_transaction(
+        self, port: SensorPort, write_bytes: bytes, read_length: int, timeout_seconds: float
+    ) -> bytes:
+        with self._lock:
+            brick = self._get_brick()
+            sensor_port = self._sensor_port(port)
+            brick.ls_write(sensor_port, write_bytes, read_length)
+            deadline = time.monotonic() + timeout_seconds
+            while True:
+                try:
+                    brick.ls_get_status(sensor_port)
+                    return brick.ls_read(sensor_port)
+                except Exception as exc:
+                    if type(exc).__name__ != "I2CPendingError" or time.monotonic() >= deadline:
+                        raise
+                    time.sleep(0.01)
+
+    def set_brick_name(self, name: str) -> None:
+        with self._lock:
+            self._get_brick().set_brick_name(name)
+
+    def keep_alive(self) -> int:
+        with self._lock:
+            return self._get_brick().keep_alive()
 
     def close(self) -> None:
         with self._lock:

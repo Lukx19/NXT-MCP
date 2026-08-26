@@ -4,7 +4,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$server = Start-Process -FilePath "$root\.venv\Scripts\nxt-mcp-http.exe" `
+$server = Start-Process -FilePath "$root\.venv\Scripts\robot-nxt-control-mcp-http.exe" `
     -ArgumentList '--port', $Port -WorkingDirectory $root -WindowStyle Hidden -PassThru
 
 try {

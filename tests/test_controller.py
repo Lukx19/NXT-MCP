@@ -29,6 +29,9 @@ class FakeHardware:
         self.ticks_per_read = ticks_per_read
         self.stop_calls: list[tuple[str, bool]] = []
         self.tones: list[tuple[int, int]] = []
+        self.files: dict[str, bytes] = {}
+        self.mailboxes: dict[int, bytes] = {}
+        self.sync_calls: list[tuple[str, str, int, int]] = []
 
     def brick_info(self) -> dict[str, Any]:
         return {"name": "TEST", "battery_mv": 7600, "free_flash_bytes": 1234}
@@ -71,10 +74,20 @@ class FakeHardware:
             "rotation_count": self.tacho[port],
         }
 
+    def drive_sync(self, left, right, power, turn_ratio) -> None:
+        self.sync_calls.append((left, right, power, turn_ratio))
+        self.power[left] = self.power[right] = power
+
     def read_sensor(self, port, sensor_type) -> dict[str, Any]:
         value = self.sensor_values[min(self.sensor_index, len(self.sensor_values) - 1)]
         self.sensor_index += 1
         return {"port": port, "sensor_type": sensor_type, "value": value, "units": "test"}
+
+    def raw_sensor_state(self, port) -> dict[str, Any]:
+        return {"port": port, "configured_type": "light", "valid": True, "raw_value": 500, "normalized_value": 500, "scaled_value": self.sensor_values[min(self.sensor_index, len(self.sensor_values) - 1)], "calibrated_value": 0}
+
+    def relative_sensor_value(self, port, sensor_type) -> float:
+        return float(self.sensor_values[min(self.sensor_index, len(self.sensor_values) - 1)])
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -105,6 +118,17 @@ class FakeHardware:
     def current_program(self): return None
     def play_tone(self, frequency_hz, duration_ms):
         self.tones.append((frequency_hz, duration_ms))
+    def play_sound_file(self, name, loop): pass
+    def stop_sound(self): pass
+    def list_files(self, pattern): return [(name, len(data)) for name, data in self.files.items()]
+    def read_file(self, name, max_bytes): return self.files[name]
+    def write_file(self, name, content): self.files[name] = content
+    def delete_file(self, name): self.files.pop(name)
+    def mailbox_send(self, inbox, data): self.mailboxes[inbox] = data
+    def mailbox_receive(self, inbox, remove): return self.mailboxes.pop(inbox) if remove else self.mailboxes[inbox]
+    def i2c_transaction(self, port, write_bytes, read_length, timeout_seconds): return bytes(reversed(write_bytes))[:read_length]
+    def set_brick_name(self, name): pass
+    def keep_alive(self): return 120000
     def close(self) -> None: pass
 
 
@@ -286,3 +310,29 @@ def test_touch_cycle_alternates_directions_and_beeps() -> None:
     assert [phase["phase"] for phase in result["phases"]] == ["press", "release"]
     assert hardware.tones == [(440, 500)]
     assert hardware.power["C"] == 0
+
+
+def test_sensor_relative_reference_returns_difference_from_captured_zero() -> None:
+    hardware = FakeHardware([42])
+    controller = NxtController(hardware)
+
+    zero = controller.zero_sensor_reference(1, "light")
+    hardware.sensor_values = [57]
+    reading = controller.read_sensor_relative(1, "light")
+
+    assert zero["zero_value"] == 42
+    assert reading["value"] == 15
+    assert reading["absolute_value"] == 57
+
+
+def test_sync_drive_and_i2c_and_file_mailbox_are_bounded_controller_operations() -> None:
+    hardware = FakeHardware()
+    controller = NxtController(hardware)
+
+    assert controller.drive_sync("B", "C", 40, -20)["regulated"] == "sync"
+    assert hardware.sync_calls == [("B", "C", 40, -20)]
+    assert controller.i2c_transaction(1, [1, 2], 2)["read_bytes"] == [2, 1]
+    assert controller.write_file("log.csv", "x,y", overwrite=False)["size_bytes"] == 3
+    assert controller.read_file("log.csv")["content"] == "x,y"
+    controller.mailbox_send(0, "ok")
+    assert controller.mailbox_receive(0)["data"] == "ok"

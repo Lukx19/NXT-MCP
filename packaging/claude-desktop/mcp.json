@@ -1,7 +1,7 @@
 {
   "mcpServers": {
-    "lego-nxt": {
-      "command": "C:\\Users\\lukas\\workspace\\NXT-MCP\\.venv\\Scripts\\nxt-mcp-stdio.exe",
+    "robot-nxt-control": {
+      "command": "C:\\Users\\lukas\\workspace\\NXT-MCP\\.venv\\Scripts\\robot-nxt-control-mcp-stdio.exe",
       "cwd": "C:\\Users\\lukas\\workspace\\NXT-MCP"
     }
   }

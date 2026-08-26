@@ -7,8 +7,8 @@ $ErrorActionPreference = "Stop"
 $version = "1.0.30"
 $expectedSha256 = "7FB1DFEC805B97983763D7D0AE244320DA12ADD1003D4249C96CC4D586398C79"
 $downloadUrl = "https://github.com/libusb/libusb/releases/download/v$version/libusb-$version.7z"
-$archive = Join-Path ([IO.Path]::GetTempPath()) "nxt-mcp-libusb-$version-$PID.7z"
-$extractDirectory = Join-Path ([IO.Path]::GetTempPath()) "nxt-mcp-libusb-$version-$PID"
+$archive = Join-Path ([IO.Path]::GetTempPath()) "robot-nxt-control-mcp-libusb-$version-$PID.7z"
+$extractDirectory = Join-Path ([IO.Path]::GetTempPath()) "robot-nxt-control-mcp-libusb-$version-$PID"
 $targetDirectory = [IO.Path]::GetFullPath($PythonDirectory)
 $target = Join-Path $targetDirectory "libusb-1.0.dll"
 

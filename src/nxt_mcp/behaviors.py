@@ -33,6 +33,15 @@ _SAFE_BUILTINS: dict[str, Any] = {
 _ROBOT_METHODS = {
     "configure_sensor",
     "read_sensor",
+    "read_sensor_raw",
+    "zero_sensor_reference",
+    "read_sensor_relative",
+    "wait_sensor",
+    "sensor_stream",
+    "log_start",
+    "log_status",
+    "log_stop",
+    "log_export",
     "motor_until",
     "motor_for_ticks",
     "motor_position",
@@ -44,9 +53,13 @@ _ROBOT_METHODS = {
     "motors_absolute",
     "motors_until",
     "run_motor",
+    "drive_sync",
+    "wait_motors",
     "stop_motor",
     "state",
     "play_tone",
+    "play_sound_file",
+    "stop_sound",
     "sleep",
 }
 _FORBIDDEN_NODES = (
@@ -163,6 +176,36 @@ class ScriptRobot:
 
     def read_sensor(self, port: int, sensor_type: str) -> dict[str, Any]:
         return self._record("read_sensor", self._controller.read_sensor(port, sensor_type))
+
+    def read_sensor_raw(self, port: int, sensor_type: str | None = None) -> dict[str, Any]:
+        return self._record("read_sensor_raw", self._controller.read_sensor_raw(port, sensor_type))
+
+    def zero_sensor_reference(self, port: int, sensor_type: str) -> dict[str, Any]:
+        return self._record("zero_sensor_reference", self._controller.zero_sensor_reference(port, sensor_type))
+
+    def read_sensor_relative(self, port: int, sensor_type: str) -> dict[str, Any]:
+        return self._record("read_sensor_relative", self._controller.read_sensor_relative(port, sensor_type))
+
+    def wait_sensor(self, port: int, sensor_type: str, condition: str, threshold: float | None = None, debounce_ms: int = 0, timeout_seconds: float = 20.0) -> dict[str, Any]:
+        result = self._controller.wait_sensor(port, sensor_type, condition, threshold, debounce_ms, timeout_seconds)
+        if not result["ok"]:
+            raise RuntimeError(f"wait_sensor stopped: {result['reason']}")
+        return self._record("wait_sensor", result)
+
+    def sensor_stream(self, port: int, sensor_type: str, sample_interval_ms: int = 100, duration_seconds: float = 5.0, max_samples: int = 100) -> dict[str, Any]:
+        return self._record("sensor_stream", self._controller.sensor_stream(port, sensor_type, sample_interval_ms, duration_seconds, max_samples))
+
+    def log_start(self, channels: list[str], interval_ms: int = 100, duration_seconds: float = 10.0) -> dict[str, Any]:
+        return self._record("log_start", self._controller.log_start(channels, interval_ms, duration_seconds))
+
+    def log_status(self, job_id: str) -> dict[str, Any]:
+        return self._record("log_status", self._controller.log_status(job_id))
+
+    def log_stop(self, job_id: str) -> dict[str, Any]:
+        return self._record("log_stop", self._controller.log_stop(job_id))
+
+    def log_export(self, job_id: str) -> dict[str, Any]:
+        return self._record("log_export", self._controller.log_export(job_id))
 
     def motor_until(
         self,
@@ -291,6 +334,15 @@ class ScriptRobot:
     def run_motor(self, port: str, power: int, regulated: bool = True) -> dict[str, Any]:
         return self._record("run_motor", self._controller.run_motor(port, power, regulated))
 
+    def drive_sync(self, left_port: str, right_port: str, power: int, turn_ratio: int = 0) -> dict[str, Any]:
+        return self._record("drive_sync", self._controller.drive_sync(left_port, right_port, power, turn_ratio))
+
+    def wait_motors(self, ports: list[str], timeout_seconds: float = 10.0, brake: bool = True) -> dict[str, Any]:
+        result = self._controller.wait_motors(ports, timeout_seconds, brake)
+        if not result["ok"]:
+            raise RuntimeError(f"wait_motors stopped: {result['reason']}")
+        return self._record("wait_motors", result)
+
     def stop_motor(self, port: str, brake: bool = False) -> dict[str, Any]:
         return self._record("stop_motor", self._controller.stop_motor(port, brake))
 
@@ -301,6 +353,12 @@ class ScriptRobot:
 
     def play_tone(self, frequency_hz: int = 440, duration_ms: int = 500) -> dict[str, Any]:
         return self._record("play_tone", self._controller.play_tone(frequency_hz, duration_ms))
+
+    def play_sound_file(self, name: str, loop: bool = False) -> dict[str, Any]:
+        return self._record("play_sound_file", self._controller.play_sound_file(name, loop))
+
+    def stop_sound(self) -> dict[str, Any]:
+        return self._record("stop_sound", self._controller.stop_sound())
 
     def sleep(self, seconds: float) -> dict[str, Any]:
         if not 0 <= seconds <= 30:

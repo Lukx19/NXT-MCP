@@ -1,10 +1,15 @@
-# NXT MCP Architecture
+# Robot NXT Control MCP architecture
 
 ## Purpose
 
-NXT MCP lets an MCP client control an original LEGO Mindstorms NXT connected to a
-Windows PC by USB. The PC owns the control loop. The brick runs its stock firmware and
-receives standard NXT direct commands; it does not execute Python.
+Robot NXT Control MCP lets an MCP client control a compatible programmable brick connected
+to a Windows PC by USB. The PC owns the control loop. The brick runs its stock firmware
+and receives its documented direct commands; it does not execute Python.
+
+LEGO, MINDSTORMS, and NXT are trademarks of the LEGO Group. This independent project
+uses those names only when needed to identify compatible hardware, protocols, or
+third-party dependencies, and is not affiliated with, sponsored by, or endorsed by the
+LEGO Group.
 
 The system supports two ways to request behavior:
 
@@ -25,7 +30,7 @@ flowchart LR
     PyUSB["NXT-Python + PyUSB"]
     LibUSB["libusb-1.0.dll"]
     WinUSB["Windows WinUSB driver"]
-    Brick["LEGO Mindstorms NXT<br/>stock firmware"]
+    Brick["Compatible programmable brick<br/>stock firmware"]
     IO["Motors A-C<br/>Sensors S1-S4"]
 
     Client -->|JSON-RPC MCP requests| Transport

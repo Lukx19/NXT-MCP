@@ -37,7 +37,7 @@ def unpack(result: Any) -> Any:
 async def main() -> None:
     args = parse_args()
     root = Path(__file__).resolve().parent.parent
-    executable = root / ".venv" / "Scripts" / "nxt-mcp.exe"
+    executable = root / ".venv" / "Scripts" / "robot-nxt-control-mcp.exe"
     if not executable.exists():
         raise SystemExit(f"MCP server executable not found: {executable}")
 

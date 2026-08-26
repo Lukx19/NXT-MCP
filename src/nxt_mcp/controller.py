@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import threading
 import time
+import csv
+import io
+import uuid
 from collections.abc import Callable
 from typing import Any, Literal
 
@@ -26,6 +29,9 @@ class NxtController:
         self._clock = clock
         self._sleep = sleep
         self._lock = threading.RLock()
+        self._sensor_zeroes: dict[tuple[int, str], float] = {}
+        self._logs: dict[str, dict[str, Any]] = {}
+        self._log_lock = threading.RLock()
 
     def info(self) -> dict[str, Any]:
         with self._lock:
@@ -51,6 +57,37 @@ class NxtController:
             "tacho_count": state["tacho_count"],
             "block_tacho_count": state["block_tacho_count"],
         }
+
+    def motor_state(self, port: MotorPort) -> dict[str, Any]:
+        with self._lock:
+            state = self._hardware.motor_state(port)
+        return {**state, "running": state.get("run_state") != "idle", "brake_mode": "brake" in state.get("mode", "")}
+
+    def drive_sync(self, left_port: MotorPort, right_port: MotorPort, power: int, turn_ratio: int = 0) -> dict[str, Any]:
+        self._validate_ports([left_port, right_port])
+        self._validate_power(power, allow_zero=False)
+        if not -100 <= turn_ratio <= 100:
+            raise ValueError("turn_ratio must be between -100 and 100")
+        with self._lock:
+            self._hardware.drive_sync(left_port, right_port, power, turn_ratio)
+        return {"ok": True, "left_port": left_port, "right_port": right_port, "power": power, "turn_ratio": turn_ratio, "regulated": "sync"}
+
+    def wait_motors(self, ports: list[MotorPort], timeout_seconds: float = 10.0, brake: bool = True) -> dict[str, Any]:
+        self._validate_ports(ports)
+        if not 0.01 <= timeout_seconds <= 300:
+            raise ValueError("timeout_seconds must be between 0.01 and 300")
+        started = self._clock()
+        with self._lock:
+            try:
+                while any(self._hardware.motor_state(port).get("run_state") != "idle" for port in ports):
+                    if self._clock() - started >= timeout_seconds:
+                        self._hardware.stop_motors(ports, brake)
+                        return {"ok": False, "reason": "timeout", "ports": ports, "elapsed_seconds": round(self._clock() - started, 3)}
+                    self._sleep(0.02)
+            except Exception:
+                self._hardware.stop_motors(ports, brake)
+                raise
+        return {"ok": True, "reason": "stopped", "ports": ports, "elapsed_seconds": round(self._clock() - started, 3)}
 
     def zero_motor_position(self, port: MotorPort) -> dict[str, Any]:
         """Set the firmware program-relative encoder count to zero."""
@@ -378,6 +415,210 @@ class NxtController:
         with self._lock:
             return self._hardware.read_sensor(port, sensor_type)
 
+    def read_sensor_raw(self, port: SensorPort, sensor_type: SensorType | None = None) -> dict[str, Any]:
+        with self._lock:
+            if sensor_type is not None:
+                self._hardware.read_sensor(port, sensor_type)
+            return self._hardware.raw_sensor_state(port)
+
+    def zero_sensor_reference(self, port: SensorPort, sensor_type: SensorType) -> dict[str, Any]:
+        if sensor_type not in ("light", "color", "ultrasonic"):
+            raise ValueError("relative sensor reference is supported for light, color, and ultrasonic only")
+        with self._lock:
+            value = self._hardware.relative_sensor_value(port, sensor_type)
+        self._sensor_zeroes[(port, sensor_type)] = float(value)
+        units = "reflected_raw_0_1023" if sensor_type == "color" else ("cm" if sensor_type == "ultrasonic" else "raw_0_1023")
+        return {"ok": True, "port": port, "sensor_type": sensor_type, "zero_value": value, "units": units}
+
+    def read_sensor_relative(self, port: SensorPort, sensor_type: SensorType) -> dict[str, Any]:
+        if sensor_type not in ("light", "color", "ultrasonic"):
+            raise ValueError("relative sensor mode is supported for light, color, and ultrasonic only")
+        with self._lock:
+            value = self._hardware.relative_sensor_value(port, sensor_type)
+        key = (port, sensor_type)
+        if key not in self._sensor_zeroes:
+            raise ValueError("sensor reference is not set; call zero_sensor_reference first")
+        zero = self._sensor_zeroes[key]
+        units = "reflected_raw_0_1023" if sensor_type == "color" else ("cm" if sensor_type == "ultrasonic" else "raw_0_1023")
+        return {"port": port, "sensor_type": sensor_type, "value": value - zero, "absolute_value": value, "zero_value": zero, "units": units}
+
+    def wait_sensor(self, port: SensorPort, sensor_type: SensorType, condition: SensorCondition, threshold: float | None = None, debounce_ms: int = 0, timeout_seconds: float = 20.0) -> dict[str, Any]:
+        predicate = self._sensor_predicate(sensor_type, condition, threshold)
+        if not 0 <= debounce_ms <= 5000 or not 0.01 <= timeout_seconds <= 300:
+            raise ValueError("invalid debounce_ms or timeout_seconds")
+        started = self._clock()
+        matched_at: float | None = None
+        last: dict[str, Any] | None = None
+        while self._clock() - started < timeout_seconds:
+            last = self.read_sensor(port, sensor_type)
+            if predicate(last["value"]):
+                matched_at = matched_at or self._clock()
+                if (self._clock() - matched_at) * 1000 >= debounce_ms:
+                    return {"ok": True, "reason": "sensor_reached", "sensor": last, "elapsed_seconds": round(self._clock() - started, 3)}
+            else:
+                matched_at = None
+            self._sleep(0.02)
+        return {"ok": False, "reason": "timeout", "sensor": last, "elapsed_seconds": round(self._clock() - started, 3)}
+
+    def play_sound_file(self, name: str, loop: bool = False) -> dict[str, Any]:
+        self._validate_brick_filename(name, allowed_extensions={".rso"})
+        with self._lock:
+            self._hardware.play_sound_file(name, loop)
+        return {"ok": True, "name": name, "loop": loop}
+
+    def stop_sound(self) -> dict[str, Any]:
+        with self._lock:
+            self._hardware.stop_sound()
+        return {"ok": True, "state": "stopped"}
+
+    def list_files(self, pattern: str = "*.*") -> dict[str, Any]:
+        if pattern not in ("*.*",) and ("/" in pattern or "\\" in pattern or len(pattern) > 20):
+            raise ValueError("pattern must be a simple NXT file pattern")
+        with self._lock:
+            files = self._hardware.list_files(pattern)
+        return {"files": [{"name": name, "size_bytes": size} for name, size in files]}
+
+    def read_file(self, name: str, max_bytes: int = 65536) -> dict[str, Any]:
+        self._validate_brick_filename(name)
+        if not 1 <= max_bytes <= 65536:
+            raise ValueError("max_bytes must be between 1 and 65536")
+        with self._lock:
+            content = self._hardware.read_file(name, max_bytes)
+        return {"name": name, "size_bytes": len(content), "content": content.decode("utf-8", errors="replace")}
+
+    def write_file(self, name: str, content: str, overwrite: bool = False) -> dict[str, Any]:
+        self._validate_brick_filename(name, allowed_extensions={".txt", ".csv", ".dat", ".rso"})
+        data = content.encode("utf-8")
+        if len(data) > 65536:
+            raise ValueError("content must not exceed 65536 bytes")
+        with self._lock:
+            if overwrite:
+                try:
+                    self._hardware.delete_file(name)
+                except Exception as exc:
+                    if type(exc).__name__ != "FileNotFoundError":
+                        raise
+            self._hardware.write_file(name, data)
+        return {"ok": True, "name": name, "size_bytes": len(data)}
+
+    def delete_file(self, name: str) -> dict[str, Any]:
+        self._validate_brick_filename(name)
+        with self._lock:
+            self._hardware.delete_file(name)
+        return {"ok": True, "name": name}
+
+    def mailbox_send(self, inbox: int, data: str) -> dict[str, Any]:
+        encoded = data.encode("utf-8")
+        if not 0 <= inbox <= 19 or len(encoded) > 58:
+            raise ValueError("inbox must be 0..19 and data must be at most 58 UTF-8 bytes")
+        with self._lock:
+            self._hardware.mailbox_send(inbox, encoded)
+        return {"ok": True, "inbox": inbox, "bytes": len(encoded)}
+
+    def mailbox_receive(self, inbox: int, remove: bool = True) -> dict[str, Any]:
+        if not 0 <= inbox <= 19:
+            raise ValueError("inbox must be 0..19")
+        with self._lock:
+            data = self._hardware.mailbox_receive(inbox, remove)
+        return {"inbox": inbox, "removed": remove, "data": data.decode("utf-8", errors="replace")}
+
+    def i2c_transaction(self, port: SensorPort, write_bytes: list[int], read_length: int, timeout_seconds: float = 1.0) -> dict[str, Any]:
+        if not 0 <= len(write_bytes) <= 16 or not 0 <= read_length <= 16 or not 0.01 <= timeout_seconds <= 10:
+            raise ValueError("I2C write/read lengths must be 0..16 and timeout_seconds 0.01..10")
+        if any(not 0 <= value <= 255 for value in write_bytes):
+            raise ValueError("write_bytes must contain bytes from 0 to 255")
+        with self._lock:
+            data = self._hardware.i2c_transaction(port, bytes(write_bytes), read_length, timeout_seconds)
+        return {"port": port, "read_bytes": list(data)}
+
+    def set_brick_name(self, name: str) -> dict[str, Any]:
+        if not 1 <= len(name) <= 15 or not name.isascii() or "\0" in name:
+            raise ValueError("name must contain 1..15 ASCII characters")
+        with self._lock:
+            self._hardware.set_brick_name(name)
+        return {"ok": True, "name": name}
+
+    def keep_alive(self) -> dict[str, Any]:
+        with self._lock:
+            timeout_ms = self._hardware.keep_alive()
+        return {"ok": True, "sleep_timeout_ms": timeout_ms}
+
+    def sensor_stream(self, port: SensorPort, sensor_type: SensorType, sample_interval_ms: int = 100, duration_seconds: float = 5.0, max_samples: int = 100) -> dict[str, Any]:
+        if not 10 <= sample_interval_ms <= 1000 or not 0.01 <= duration_seconds <= 300 or not 1 <= max_samples <= 10000:
+            raise ValueError("invalid stream interval, duration, or sample limit")
+        started = self._clock(); samples: list[dict[str, Any]] = []
+        while len(samples) < max_samples and self._clock() - started < duration_seconds:
+            samples.append({"elapsed_ms": round((self._clock() - started) * 1000), "reading": self.read_sensor(port, sensor_type)})
+            self._sleep(sample_interval_ms / 1000)
+        return {"ok": True, "port": port, "sensor_type": sensor_type, "samples": samples, "truncated": len(samples) == max_samples}
+
+    def log_start(self, channels: list[str], interval_ms: int = 100, duration_seconds: float = 10.0) -> dict[str, Any]:
+        if not channels or len(channels) > 12 or not 10 <= interval_ms <= 1000 or not 0.1 <= duration_seconds <= 300:
+            raise ValueError("invalid channels, interval_ms, or duration_seconds")
+        for channel in channels:
+            self._validate_log_channel(channel)
+        job_id = uuid.uuid4().hex[:12]
+        job = {"id": job_id, "channels": channels, "interval_ms": interval_ms, "duration_seconds": duration_seconds, "started": time.monotonic(), "samples": [], "state": "running", "stop": threading.Event()}
+        def collect() -> None:
+            deadline = time.monotonic() + duration_seconds
+            try:
+                while not job["stop"].is_set() and time.monotonic() < deadline:
+                    row = {"elapsed_ms": round((time.monotonic() - job["started"]) * 1000)}
+                    for channel in channels:
+                        row[channel] = self._log_value(channel)
+                    with self._log_lock:
+                        job["samples"].append(row)
+                    job["stop"].wait(interval_ms / 1000)
+                job["state"] = "stopped" if job["stop"].is_set() else "completed"
+            except Exception as exc:
+                job["state"] = "failed"; job["error"] = str(exc)
+        with self._log_lock:
+            self._logs[job_id] = job
+        threading.Thread(target=collect, name=f"nxt-log-{job_id}", daemon=True).start()
+        return {"ok": True, "job_id": job_id, "channels": channels, "state": "running"}
+
+    def log_status(self, job_id: str) -> dict[str, Any]:
+        with self._log_lock:
+            job = self._get_log(job_id)
+            return {"job_id": job_id, "state": job["state"], "sample_count": len(job["samples"]), "error": job.get("error")}
+
+    def log_stop(self, job_id: str) -> dict[str, Any]:
+        with self._log_lock:
+            job = self._get_log(job_id); job["stop"].set()
+        return self.log_status(job_id)
+
+    def log_export(self, job_id: str, format: str = "csv") -> dict[str, Any]:
+        if format != "csv":
+            raise ValueError("only csv export is supported")
+        with self._log_lock:
+            job = self._get_log(job_id); rows = list(job["samples"]); channels = list(job["channels"])
+        buffer = io.StringIO(); writer = csv.DictWriter(buffer, fieldnames=["elapsed_ms", *channels]); writer.writeheader(); writer.writerows(rows)
+        return {"job_id": job_id, "format": "csv", "content": buffer.getvalue(), "sample_count": len(rows)}
+
+    def _log_value(self, channel: str) -> Any:
+        if channel == "battery_mv":
+            return self.info()["battery_mv"]
+        kind, port, *tail = channel.split(":")
+        if kind == "motor":
+            return self.motor_position(port)["position_degrees"]
+        return self.read_sensor(int(port), tail[0])["value"]
+
+    @staticmethod
+    def _validate_log_channel(channel: str) -> None:
+        if channel == "battery_mv":
+            return
+        parts = channel.split(":")
+        if len(parts) == 2 and parts[0] == "motor" and parts[1] in ("A", "B", "C"):
+            return
+        if len(parts) == 3 and parts[0] == "sensor" and parts[1] in ("1", "2", "3", "4") and parts[2] in ("touch", "light", "sound", "ultrasonic", "color", "temperature"):
+            return
+        raise ValueError("channels must be battery_mv, motor:A|B|C, or sensor:1..4:<type>")
+
+    def _get_log(self, job_id: str) -> dict[str, Any]:
+        if job_id not in self._logs:
+            raise ValueError("unknown log job")
+        return self._logs[job_id]
+
     def state(self, text: bool = True) -> str | dict[str, Any]:
         """Read the brick, all output ports, and all input ports in one MCP operation."""
         with self._lock:
@@ -505,6 +746,16 @@ class NxtController:
             raise ValueError("power must be between -100 and 100")
         if not allow_zero and power == 0:
             raise ValueError("power must not be zero")
+
+    @staticmethod
+    def _validate_brick_filename(name: str, allowed_extensions: set[str] | None = None) -> None:
+        from pathlib import PurePosixPath
+        path = PurePosixPath(name)
+        if name != path.name or not 1 <= len(name) <= 19 or not name.isascii() or "\\" in name:
+            raise ValueError("name must be a 1..19 character ASCII brick filename without a path")
+        if allowed_extensions is not None and path.suffix.lower() not in allowed_extensions:
+            allowed = ", ".join(sorted(allowed_extensions))
+            raise ValueError(f"filename extension must be one of: {allowed}")
 
     @staticmethod
     def _validate_ports(ports: list[MotorPort]) -> None:
